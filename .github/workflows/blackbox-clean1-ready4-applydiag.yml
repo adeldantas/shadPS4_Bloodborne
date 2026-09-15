@@ -1,0 +1,111 @@
+name: BLACKBOX CLEAN1 READY4 apply diagnostics
+
+on:
+  push:
+    branches:
+      - bb-blackbox-clean1-ready4-ci
+    paths:
+      - ".github/workflows/blackbox-clean1-ready4-applydiag.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASELINE_SHA: 03d62ad22438344f1dcd38c5b5e44f660b564b92
+  READY4_SHA256: 0b709de7e6c588b76786d8b648d5f669563c0bf45df5ec44a63db56f869e795f
+
+jobs:
+  apply-diagnostics:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Reconstruct verified READY4 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $parts = @(
+            ".bbx/package/ready4.b64.part01",
+            ".bbx/package/ready4.b64.part02",
+            ".bbx/package/ready4.b64.part03",
+            ".bbx/package/ready4.b64.part04",
+            ".bbx/package/ready4.b64.part05",
+            ".bbx/package/ready4.b64.part06",
+            ".bbx/package/ready4.b64.part07a",
+            ".bbx/package/ready4.b64.part07b",
+            ".bbx/package/ready4.b64.part08",
+            ".bbx/package/ready4.b64.part09",
+            ".bbx/package/ready4.b64.part10a",
+            ".bbx/package/ready4.b64.part10b",
+            ".bbx/package/ready4.b64.part11a",
+            ".bbx/package/ready4.b64.part11b",
+            ".bbx/package/ready4.b64.part12a",
+            ".bbx/package/ready4.b64.part12b",
+            ".bbx/package/ready4.b64.part13"
+          )
+          $b64 = ($parts | ForEach-Object { (Get-Content -LiteralPath $_ -Raw).Trim() }) -join ""
+          $zip = Join-Path $env:RUNNER_TEMP "SOURCE_READY4.zip"
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne $env:READY4_SHA256) { throw "READY4 hash mismatch: $sha" }
+          $pkgBase = Join-Path $env:RUNNER_TEMP "ready4-package"
+          Expand-Archive -LiteralPath $zip -DestinationPath $pkgBase -Force
+          $apply = Get-ChildItem -LiteralPath $pkgBase -Recurse -Filter APPLY_CLEAN1_SOURCE_READY.ps1 | Select-Object -First 1
+          if (-not $apply) { throw "apply script missing" }
+          "PKG_ROOT=$($apply.Directory.Parent.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Create frozen worktree
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = Join-Path $env:RUNNER_TEMP "bb-clean1-source"
+          git worktree add --detach $src $env:BASELINE_SHA
+          if ($LASTEXITCODE -ne 0) { throw "worktree creation failed" }
+          "SRC_ROOT=$src" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Run parent plus CLEAN1 apply
+        id: apply
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP "apply-clean1.log"
+          try {
+            & "$env:PKG_ROOT\ci\APPLY_CLEAN1_SOURCE_READY.ps1" -RepoRoot "$env:SRC_ROOT" *>&1 | Tee-Object -FilePath $log
+            if ($LASTEXITCODE -ne 0) { throw "apply script exit $LASTEXITCODE" }
+          } catch {
+            $_ | Out-String | Tee-Object -FilePath $log -Append
+            throw
+          }
+
+      - name: Capture direct verbose git apply failure
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $patch = Join-Path $env:PKG_ROOT "integration\BLACKBOX_V1_CI_CLEAN1_CORE_SAFE.patch"
+          $out = Join-Path $env:RUNNER_TEMP "git-apply-verbose.txt"
+          Push-Location $env:SRC_ROOT
+          try {
+            git apply --check --verbose $patch 2>&1 | Tee-Object -FilePath $out
+            "git_apply_exit=$LASTEXITCODE" | Add-Content $out
+          } finally {
+            Pop-Location
+          }
+          git -C $env:SRC_ROOT status --short | Set-Content (Join-Path $env:RUNNER_TEMP "git-status.txt")
+          exit 0
+
+      - name: Upload apply diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACKBOX_CLEAN1_READY4_APPLY_DIAGNOSTICS
+          path: |
+            ${{ runner.temp }}\apply-clean1.log
+            ${{ runner.temp }}\git-apply-verbose.txt
+            ${{ runner.temp }}\git-status.txt
+          if-no-files-found: error
+          retention-days: 14
