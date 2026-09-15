@@ -1,0 +1,110 @@
+name: BLACKBOX CLEAN1 READY4 apply diagnostics 2
+
+on:
+  push:
+    branches: [bb-blackbox-clean1-ready4-ci]
+    paths: [".github/workflows/blackbox-clean1-ready4-applydiag2.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASELINE_SHA: 03d62ad22438344f1dcd38c5b5e44f660b564b92
+  READY4_SHA256: 0b709de7e6c588b76786d8b648d5f669563c0bf45df5ec44a63db56f869e795f
+
+jobs:
+  diagnose:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Reconstruct READY4 and frozen worktree
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $parts = @(
+            ".bbx/package/ready4.b64.part01", ".bbx/package/ready4.b64.part02",
+            ".bbx/package/ready4.b64.part03", ".bbx/package/ready4.b64.part04",
+            ".bbx/package/ready4.b64.part05", ".bbx/package/ready4.b64.part06",
+            ".bbx/package/ready4.b64.part07a", ".bbx/package/ready4.b64.part07b",
+            ".bbx/package/ready4.b64.part08", ".bbx/package/ready4.b64.part09",
+            ".bbx/package/ready4.b64.part10a", ".bbx/package/ready4.b64.part10b",
+            ".bbx/package/ready4.b64.part11a", ".bbx/package/ready4.b64.part11b",
+            ".bbx/package/ready4.b64.part12a", ".bbx/package/ready4.b64.part12b",
+            ".bbx/package/ready4.b64.part13"
+          )
+          $b64 = ($parts | ForEach-Object { (Get-Content $_ -Raw).Trim() }) -join ""
+          $zip = Join-Path $env:RUNNER_TEMP "ready4.zip"
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne $env:READY4_SHA256) { throw "READY4 hash mismatch: $sha" }
+          $pkgBase = Join-Path $env:RUNNER_TEMP "ready4-package"
+          Expand-Archive $zip $pkgBase -Force
+          $apply = Get-ChildItem $pkgBase -Recurse -Filter APPLY_CLEAN1_SOURCE_READY.ps1 | Select-Object -First 1
+          if (-not $apply) { throw "apply script missing" }
+          $src = Join-Path $env:RUNNER_TEMP "bb-clean1-source"
+          git worktree add --detach $src $env:BASELINE_SHA
+          if ($LASTEXITCODE -ne 0) { throw "worktree failed" }
+          "PKG_ROOT=$($apply.Directory.Parent.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          "SRC_ROOT=$src" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Reconstruct parent state through failing apply gate
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          & "$env:PKG_ROOT\ci\APPLY_CLEAN1_SOURCE_READY.ps1" -RepoRoot "$env:SRC_ROOT"
+
+      - name: Analyze failed contexts
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Continue"
+          $diag = Join-Path $env:RUNNER_TEMP "applydiag2"
+          New-Item -ItemType Directory -Path $diag -Force | Out-Null
+          $patch = Join-Path $env:PKG_ROOT "integration\BLACKBOX_V1_CI_CLEAN1_CORE_SAFE.patch"
+          Push-Location $env:SRC_ROOT
+          try {
+            "core.autocrlf=$(git config --get core.autocrlf)" | Set-Content "$diag\environment.txt"
+            "core.eol=$(git config --get core.eol)" | Add-Content "$diag\environment.txt"
+            git apply --check --verbose $patch 2>&1 | Set-Content "$diag\normal.txt"
+            "exit=$LASTEXITCODE" | Add-Content "$diag\normal.txt"
+            git apply --check --verbose --ignore-space-change $patch 2>&1 | Set-Content "$diag\ignore-space-change.txt"
+            "exit=$LASTEXITCODE" | Add-Content "$diag\ignore-space-change.txt"
+            git apply --check --verbose --ignore-whitespace $patch 2>&1 | Set-Content "$diag\ignore-whitespace.txt"
+            "exit=$LASTEXITCODE" | Add-Content "$diag\ignore-whitespace.txt"
+
+            $files = @(
+              "CMakeLists.txt",
+              "src/video_core/renderer_vulkan/vk_scheduler.h",
+              "src/video_core/renderer_vulkan/vk_scheduler.cpp",
+              "src/core/libraries/videoout/driver.cpp",
+              "src/video_core/renderer_vulkan/vk_presenter.cpp"
+            )
+            foreach($f in $files) {
+              $safe = $f.Replace('/','__')
+              Copy-Item $f "$diag\$safe" -Force
+              $bytes = [IO.File]::ReadAllBytes((Resolve-Path $f))
+              $crlf = 0; $lf = 0
+              for($i=0; $i -lt $bytes.Length; $i++) {
+                if($bytes[$i] -eq 10) {
+                  $lf++
+                  if($i -gt 0 -and $bytes[$i-1] -eq 13) { $crlf++ }
+                }
+              }
+              "$f bytes=$($bytes.Length) lf=$lf crlf=$crlf sha256=$((Get-FileHash $f -Algorithm SHA256).Hash.ToLowerInvariant())" | Add-Content "$diag\environment.txt"
+            }
+          } finally { Pop-Location }
+          exit 0
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACKBOX_CLEAN1_READY4_APPLY_DIAGNOSTICS_2
+          path: ${{ runner.temp }}\applydiag2
+          if-no-files-found: error
+          retention-days: 14
