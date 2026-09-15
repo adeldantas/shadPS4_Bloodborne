@@ -1,4 +1,4 @@
-name: BLACKBOX CLEAN1 READY4 PR gate
+name: BLACKBOX CLEAN1 PATCHFIX2 PR gate
 
 on:
   pull_request:
@@ -7,9 +7,14 @@ on:
     paths:
       - ".bbx/**"
       - ".github/workflows/blackbox-clean1-pr.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: blackbox-clean1-patchfix2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   windows-clean1:
@@ -40,26 +45,26 @@ jobs:
           arch: win64_msvc2022_64
           archives: qtbase qttools
           modules: qtmultimedia
-          cache: false
+          cache: true
 
-      - name: Exact replay, gates, build and packaging
+      - name: Exact replay, semantic gates, Tier-B build and hardened packaging
         shell: pwsh
-        run: ./.bbx/ci/bootstrap_ready4.ps1
+        run: ./.bbx/ci/bootstrap_patchfix2.ps1
 
-      - name: Upload runnable BLACKBOX package
+      - name: Upload runnable PATCHFIX2 package
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: BLACKBOX_V1_CI_CLEAN1_WIN64_QT
+          name: BLACKBOX_V1_CI_CLEAN1_PATCHFIX2_WIN64_QT
           path: ${{ env.RUNTIME_ZIP }}
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload diagnostics
+      - name: Upload PATCHFIX2 diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: BLACKBOX_V1_CI_CLEAN1_DIAGNOSTICS
-          path: ${{ runner.temp }}\bbx-diagnostics
-          if-no-files-found: warn
+          name: BLACKBOX_V1_CI_CLEAN1_PATCHFIX2_DIAGNOSTICS
+          path: ${{ runner.temp }}\bbx-patchfix2-diagnostics
+          if-no-files-found: error
           retention-days: 14
