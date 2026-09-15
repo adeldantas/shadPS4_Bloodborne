@@ -1,4 +1,4 @@
-name: BLACKBOX CLEAN1 PATCHFIX2 PR gate
+name: BLACKBOX CLEAN1 PATCHFIX3 PR gate
 
 on:
   pull_request:
@@ -13,16 +13,17 @@ permissions:
   contents: read
 
 concurrency:
-  group: blackbox-clean1-patchfix2-${{ github.event.pull_request.number || github.ref }}
+  group: blackbox-clean1-patchfix3-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   windows-clean1:
     runs-on: windows-2022
     steps:
-      - name: Checkout candidate branch
+      - name: Checkout exact candidate head
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           submodules: false
 
@@ -47,24 +48,24 @@ jobs:
           modules: qtmultimedia
           cache: true
 
-      - name: Exact replay, semantic gates, Tier-B build and hardened packaging
+      - name: Exact replay, semantic gates, Tier-B build, package reopen and synthetic smoke
         shell: pwsh
-        run: ./.bbx/ci/bootstrap_patchfix2.ps1
+        run: ./.bbx/ci/bootstrap_patchfix3.ps1
 
-      - name: Upload runnable PATCHFIX2 package
+      - name: Upload runnable PATCHFIX3 package
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: BLACKBOX_V1_CI_CLEAN1_PATCHFIX2_WIN64_QT
+          name: BLACKBOX_V1_CI_CLEAN1_PATCHFIX3_WIN64_QT
           path: ${{ env.RUNTIME_ZIP }}
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload PATCHFIX2 diagnostics
+      - name: Upload PATCHFIX3 diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: BLACKBOX_V1_CI_CLEAN1_PATCHFIX2_DIAGNOSTICS
-          path: ${{ runner.temp }}\bbx-patchfix2-diagnostics
+          name: BLACKBOX_V1_CI_CLEAN1_PATCHFIX3_DIAGNOSTICS
+          path: ${{ runner.temp }}\bbx-patchfix3-diagnostics
           if-no-files-found: error
           retention-days: 14
