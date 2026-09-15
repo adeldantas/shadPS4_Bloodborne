@@ -1,0 +1,242 @@
+name: BLACKBOX CLEAN1 READY4 bootstrap
+
+on:
+  push:
+    branches:
+      - bb-blackbox-clean1-ready4-ci
+    paths:
+      - ".github/workflows/blackbox-clean1-ready4-bootstrap.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASELINE_SHA: 03d62ad22438344f1dcd38c5b5e44f660b564b92
+  READY4_SHA256: 0b709de7e6c588b76786d8b648d5f669563c0bf45df5ec44a63db56f869e795f
+  BUILD_TYPE: Release
+
+jobs:
+  windows-clean1:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout bootstrap branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Reconstruct and verify SOURCE_READY4
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $parts = @(
+            ".bbx/package/ready4.b64.part01",
+            ".bbx/package/ready4.b64.part02",
+            ".bbx/package/ready4.b64.part03",
+            ".bbx/package/ready4.b64.part04",
+            ".bbx/package/ready4.b64.part05",
+            ".bbx/package/ready4.b64.part06",
+            ".bbx/package/ready4.b64.part07a",
+            ".bbx/package/ready4.b64.part07b",
+            ".bbx/package/ready4.b64.part08",
+            ".bbx/package/ready4.b64.part09",
+            ".bbx/package/ready4.b64.part10a",
+            ".bbx/package/ready4.b64.part10b",
+            ".bbx/package/ready4.b64.part11a",
+            ".bbx/package/ready4.b64.part11b",
+            ".bbx/package/ready4.b64.part12a",
+            ".bbx/package/ready4.b64.part12b",
+            ".bbx/package/ready4.b64.part13"
+          )
+          foreach ($p in $parts) {
+            if (-not (Test-Path -LiteralPath $p)) { throw "Missing transport chunk: $p" }
+          }
+          $b64 = ($parts | ForEach-Object { (Get-Content -LiteralPath $_ -Raw).Trim() }) -join ""
+          if ($b64.Length -ne 122832) { throw "Base64 length mismatch: $($b64.Length), expected 122832" }
+          $zip = Join-Path $env:RUNNER_TEMP "SOURCE_READY4.zip"
+          [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String($b64))
+          $sha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne $env:READY4_SHA256) { throw "SOURCE_READY4 SHA256 mismatch: $sha" }
+          $pkgBase = Join-Path $env:RUNNER_TEMP "ready4-package"
+          if (Test-Path $pkgBase) { Remove-Item -Recurse -Force $pkgBase }
+          Expand-Archive -LiteralPath $zip -DestinationPath $pkgBase
+          $apply = Get-ChildItem -LiteralPath $pkgBase -Recurse -Filter APPLY_CLEAN1_SOURCE_READY.ps1 | Select-Object -First 1
+          if (-not $apply) { throw "APPLY_CLEAN1_SOURCE_READY.ps1 not found in verified package" }
+          $pkgRoot = $apply.Directory.Parent.FullName
+          "PKG_ROOT=$pkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "READY4_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "READY4_RECONSTRUCTED_SHA256=$sha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "SOURCE_READY4 exact transport PASS: $sha"
+
+      - name: Create exact frozen baseline worktree
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $src = Join-Path $env:RUNNER_TEMP "bb-clean1-source"
+          if (Test-Path $src) { Remove-Item -Recurse -Force $src }
+          git worktree add --detach $src $env:BASELINE_SHA
+          $head = (git -C $src rev-parse HEAD).Trim()
+          if ($head -ne $env:BASELINE_SHA) { throw "Frozen baseline mismatch: $head" }
+          git -C $src submodule sync --recursive
+          git -C $src submodule update --init --recursive
+          "SRC_ROOT=$src" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Frozen baseline PASS: $head"
+
+      - name: Apply exact R3-SAVEFIX-S1 parent and CLEAN1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:PKG_ROOT\ci\APPLY_CLEAN1_SOURCE_READY.ps1" -RepoRoot "$env:SRC_ROOT"
+          if ($LASTEXITCODE -ne 0) { throw "APPLY_CLEAN1_SOURCE_READY.ps1 failed with exit code $LASTEXITCODE" }
+
+      - name: Setup Visual Studio 2022 shell
+        uses: egor-tensin/vs-shell@v2
+        with:
+          arch: x64
+
+      - name: Setup Qt 6.9.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.9.3
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          archives: qtbase qttools
+          modules: qtmultimedia
+          cache: false
+
+      - name: Install exact LLVM 19.1.1
+        shell: pwsh
+        working-directory: ${{ env.SRC_ROOT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./ci/INSTALL_LLVM_CLEAN1.ps1
+          if ($LASTEXITCODE -ne 0) { throw "LLVM installer failed with exit code $LASTEXITCODE" }
+
+      - name: Exact parent replay gate
+        shell: pwsh
+        working-directory: ${{ env.SRC_ROOT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./ci/VERIFY_EXACT_PARENT_REPLAY.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Exact parent replay failed with exit code $LASTEXITCODE" }
+
+      - name: Decoder and semantic gates
+        shell: pwsh
+        working-directory: ${{ env.SRC_ROOT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          python tools/bb_blackbox/decode.py --self-test
+          if ($LASTEXITCODE -ne 0) { throw "decoder self-test failed" }
+          python ci/test_verify_clean1.py
+          if ($LASTEXITCODE -ne 0) { throw "semantic gate regression failed" }
+          python ci/verify_clean1.py
+          if ($LASTEXITCODE -ne 0) { throw "semantic gate failed" }
+
+      - name: Tier-B Windows build
+        shell: pwsh
+        working-directory: ${{ env.SRC_ROOT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          ./ci/BUILD_TIERB_CLEAN1.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Tier-B build failed with exit code $LASTEXITCODE" }
+
+      - name: Package runnable Qt artifact
+        shell: pwsh
+        working-directory: ${{ env.SRC_ROOT }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $runtime = Join-Path $env:RUNNER_TEMP "runtime-clean1"
+          if (Test-Path $runtime) { Remove-Item -Recurse -Force $runtime }
+          New-Item -ItemType Directory -Path $runtime | Out-Null
+
+          $shad = Get-ChildItem -LiteralPath "$env:SRC_ROOT\build" -Recurse -Filter shadPS4.exe | Select-Object -First 1
+          $rec = Get-ChildItem -LiteralPath "$env:SRC_ROOT\build" -Recurse -Filter bb_blackbox_recorder.exe | Select-Object -First 1
+          if (-not $shad) { throw "shadPS4.exe not found after successful build" }
+          if (-not $rec) { throw "bb_blackbox_recorder.exe not found after successful build" }
+          Copy-Item -LiteralPath $shad.FullName -Destination "$runtime\shadPS4.exe"
+          Copy-Item -LiteralPath $rec.FullName -Destination "$runtime\bb_blackbox_recorder.exe"
+
+          $pdbs = Get-ChildItem -LiteralPath "$env:SRC_ROOT\build" -Recurse -Filter *.pdb -ErrorAction SilentlyContinue
+          foreach ($pdb in $pdbs) { Copy-Item -LiteralPath $pdb.FullName -Destination $runtime -Force }
+
+          if (Test-Path "$env:SRC_ROOT\dist\qt.conf") {
+            Copy-Item "$env:SRC_ROOT\dist\qt.conf" "$runtime\qt.conf"
+          }
+          New-Item -ItemType Directory -Path "$runtime\qtplugins" -Force | Out-Null
+          $windeployqt = Get-Command windeployqt -ErrorAction Stop
+          & $windeployqt.Source --plugindir "$runtime\qtplugins" --no-compiler-runtime --no-system-d3d-compiler --no-system-dxc-compiler --dir "$runtime" "$runtime\shadPS4.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed with exit code $LASTEXITCODE" }
+
+          Copy-Item "$env:SRC_ROOT\tools\bb_blackbox\decode.py" "$runtime\decode.py"
+          Copy-Item "$env:SRC_ROOT\tools\bb_blackbox\run_blackbox.cmd" "$runtime\run_blackbox.cmd"
+          @'
+          @echo off
+          setlocal
+          cd /d "%~dp0"
+          call run_blackbox.cmd "%~dp0shadPS4.exe"
+          '@ | Set-Content -LiteralPath "$runtime\RUN_BLACKBOX.cmd" -Encoding ascii
+
+          $required = @(
+            "$runtime\shadPS4.exe",
+            "$runtime\bb_blackbox_recorder.exe",
+            "$runtime\RUN_BLACKBOX.cmd",
+            "$runtime\decode.py"
+          )
+          foreach ($p in $required) { if (-not (Test-Path -LiteralPath $p)) { throw "Missing runtime artifact: $p" } }
+          $qwindows = Get-ChildItem -LiteralPath $runtime -Recurse -Filter qwindows.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $qwindows) { throw "qwindows.dll missing after windeployqt" }
+
+          $evidence = Join-Path $runtime "evidence"
+          New-Item -ItemType Directory -Path $evidence | Out-Null
+          if (Test-Path "$env:SRC_ROOT\ci\evidence") { Copy-Item "$env:SRC_ROOT\ci\evidence\*" $evidence -Recurse -Force }
+          if (Test-Path "$env:SRC_ROOT\SOURCE_READY_DIFF.patch") { Copy-Item "$env:SRC_ROOT\SOURCE_READY_DIFF.patch" $evidence }
+          Copy-Item -LiteralPath $env:READY4_ZIP -Destination "$evidence\SOURCE_READY4_INPUT.zip"
+
+          $manifest = Get-ChildItem -LiteralPath $runtime -Recurse -File | Sort-Object FullName | ForEach-Object {
+            $rel = $_.FullName.Substring($runtime.Length + 1).Replace('\','/')
+            $hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $rel"
+          }
+          $manifest | Set-Content -LiteralPath "$runtime\SHA256SUMS.txt" -Encoding ascii
+
+          $zipOut = Join-Path $env:RUNNER_TEMP "BLACKBOX_V1_CI_CLEAN1_WIN64_QT.zip"
+          if (Test-Path $zipOut) { Remove-Item -Force $zipOut }
+          Compress-Archive -Path "$runtime\*" -DestinationPath $zipOut -CompressionLevel Optimal
+          $outSha = (Get-FileHash -LiteralPath $zipOut -Algorithm SHA256).Hash.ToLowerInvariant()
+          $outSize = (Get-Item -LiteralPath $zipOut).Length
+          "RUNTIME_ZIP=$zipOut" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RUNTIME_ZIP_SHA256=$outSha" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Runtime package SHA256=$outSha bytes=$outSize"
+
+      - name: Upload runnable BLACKBOX package
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_WIN64_QT
+          path: ${{ env.RUNTIME_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Collect diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP "bbx-diagnostics"
+          New-Item -ItemType Directory -Path $diag -Force | Out-Null
+          if ($env:SRC_ROOT -and (Test-Path $env:SRC_ROOT)) {
+            git -C $env:SRC_ROOT status --short | Set-Content "$diag\git-status.txt"
+            git -C $env:SRC_ROOT diff --binary | Set-Content "$diag\source-diff.patch"
+            if (Test-Path "$env:SRC_ROOT\ci\evidence") { Copy-Item "$env:SRC_ROOT\ci\evidence" "$diag\ci-evidence" -Recurse -Force }
+          }
+          if ($env:READY4_RECONSTRUCTED_SHA256) { $env:READY4_RECONSTRUCTED_SHA256 | Set-Content "$diag\ready4-sha256.txt" }
+          if ($env:RUNTIME_ZIP_SHA256) { $env:RUNTIME_ZIP_SHA256 | Set-Content "$diag\runtime-zip-sha256.txt" }
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_DIAGNOSTICS
+          path: ${{ runner.temp }}\bbx-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
