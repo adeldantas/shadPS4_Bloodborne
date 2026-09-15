@@ -38,7 +38,7 @@ function Assert-PinnedCompilerCache([string]$CacheText, [string]$ExpectedPath, [
     foreach ($key in $Keys) {
         $entry = Get-CMakeCacheValue $CacheText $key
         if ($entry.Normalized -ne $expected) {
-            throw "CMake compiler identity mismatch for $key: raw='$($entry.Raw)' normalized='$($entry.Normalized)' expected='$expected'"
+            throw "CMake compiler identity mismatch for ${key}: raw='$($entry.Raw)' normalized='$($entry.Normalized)' expected='$expected'"
         }
         $entries += $entry
     }
