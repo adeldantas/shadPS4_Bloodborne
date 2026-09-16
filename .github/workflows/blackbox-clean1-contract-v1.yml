@@ -44,19 +44,8 @@ jobs:
           Copy-Item -LiteralPath $fix -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip')
           $contract = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V1.ps1'
           Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V1.ps1') -Destination $contract
-          $oldQtGate = @'
-    $QtConf = Join-Path $Src 'dist\qt.conf'; if (-not (Test-Path -LiteralPath $QtConf -PathType Leaf)) { throw 'STOP_S5_QT_CONF' }; Copy-Item -LiteralPath $QtConf -Destination (Join-Path $Runtime 'qt.conf'); if ((Get-Content -LiteralPath $QtConf -Raw) -notmatch '(?im)^\s*Plugins\s*=\s*qtplugins\s*$') { throw 'STOP_LAYOUT qt.conf plugins' }
-'@
-          $newQtGate = @'
-    $QtConf = Join-Path $Src 'dist\qt.conf'
-    if (-not (Test-Path -LiteralPath $QtConf -PathType Leaf)) { throw 'STOP_S5_QT_CONF' }
-    $RuntimeQtConf = Join-Path $Runtime 'qt.conf'
-    Copy-Item -LiteralPath $QtConf -Destination $RuntimeQtConf
-    $QtConfText = Get-Content -LiteralPath $RuntimeQtConf -Raw
-    if ($QtConfText -notmatch '(?im)^\s*\[Paths\]\s*$' -or $QtConfText -notmatch '(?im)^\s*plugins\s*=\s*"\./qtplugins"\s*$') { throw 'STOP_LAYOUT qt.conf source' }
-    [IO.File]::WriteAllText($RuntimeQtConf, "[Paths]`r`nPlugins = qtplugins`r`n", [Text.UTF8Encoding]::new($false))
-    if ((Get-Content -LiteralPath $RuntimeQtConf -Raw) -notmatch '(?im)^\s*Plugins\s*=\s*qtplugins\s*$') { throw 'STOP_LAYOUT qt.conf plugins' }
-'@
+          $oldQtGate = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ICAgICRRdENvbmYgPSBKb2luLVBhdGggJFNyYyAnZGlzdFxxdC5jb25mJzsgaWYgKC1ub3QgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJFF0Q29uZiAtUGF0aFR5cGUgTGVhZikpIHsgdGhyb3cgJ1NUT1BfUzVfUVRfQ09ORicgfTsgQ29weS1JdGVtIC1MaXRlcmFsUGF0aCAkUXRDb25mIC1EZXN0aW5hdGlvbiAoSm9pbi1QYXRoICRSdW50aW1lICdxdC5jb25mJyk7IGlmICgoR2V0LUNvbnRlbnQgLUxpdGVyYWxQYXRoICRRdENvbmYgLVJhdykgLW5vdG1hdGNoICcoP2ltKV5ccypQbHVnaW5zXHMqPVxzKnF0cGx1Z2luc1xzKiQnKSB7IHRocm93ICdTVE9QX0xBWU9VVCBxdC5jb25mIHBsdWdpbnMnIH0='))
+          $newQtGate = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ICAgICRRdENvbmYgPSBKb2luLVBhdGggJFNyYyAnZGlzdFxxdC5jb25mJwogICAgaWYgKC1ub3QgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJFF0Q29uZiAtUGF0aFR5cGUgTGVhZikpIHsgdGhyb3cgJ1NUT1BfUzVfUVRfQ09ORicgfQogICAgJFJ1bnRpbWVRdENvbmYgPSBKb2luLVBhdGggJFJ1bnRpbWUgJ3F0LmNvbmYnCiAgICBDb3B5LUl0ZW0gLUxpdGVyYWxQYXRoICRRdENvbmYgLURlc3RpbmF0aW9uICRSdW50aW1lUXRDb25mCiAgICAkUXRDb25mVGV4dCA9IEdldC1Db250ZW50IC1MaXRlcmFsUGF0aCAkUnVudGltZVF0Q29uZiAtUmF3CiAgICBpZiAoJFF0Q29uZlRleHQgLW5vdG1hdGNoICcoP2ltKV5ccypcW1BhdGhzXF1ccyokJyAtb3IgJFF0Q29uZlRleHQgLW5vdG1hdGNoICcoP2ltKV5ccypwbHVnaW5zXHMqPVxzKiJcLi9xdHBsdWdpbnMiXHMqJCcpIHsgdGhyb3cgJ1NUT1BfTEFZT1VUIHF0LmNvbmYgc291cmNlJyB9CiAgICBbSU8uRmlsZV06OldyaXRlQWxsVGV4dCgkUnVudGltZVF0Q29uZiwgIltQYXRoc11gcmBuUGx1Z2lucyA9IHF0cGx1Z2luc2ByYG4iLCBbVGV4dC5VVEY4RW5jb2RpbmddOjpuZXcoJGZhbHNlKSkKICAgIGlmICgoR2V0LUNvbnRlbnQgLUxpdGVyYWxQYXRoICRSdW50aW1lUXRDb25mIC1SYXcpIC1ub3RtYXRjaCAnKD9pbSleXHMqUGx1Z2luc1xzKj1ccypxdHBsdWdpbnNccyokJykgeyB0aHJvdyAnU1RPUF9MQVlPVVQgcXQuY29uZiBwbHVnaW5zJyB9'))
           $contractText = [IO.File]::ReadAllText($contract)
           if ([regex]::Matches($contractText, [regex]::Escape($oldQtGate)).Count -ne 1) { throw 'STOP_CI_CONTRACT_PATCH_CARDINALITY qt.conf' }
           $contractText = $contractText.Replace($oldQtGate, $newQtGate)
