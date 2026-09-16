@@ -46,8 +46,10 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $v1Blob -ne '4560c463208c603472de7fa0200a0283c4e69ca0') { throw "STOP_V2_V1_CONTRACT_IDENTITY blob=$v1Blob" }
 
           $driver = Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V2_DRIVER.ps1'
+          $launcherRel = '.github/contract/run_blackbox_contract_v2.ps1'
           $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\contract\run_blackbox_contract_v2.ps1'
-          if ((Get-FileHash -LiteralPath $launcher -Algorithm SHA256).Hash.ToLowerInvariant() -ne '71d6d3f20ddf81881d0d3a9c7eb25dbd6ca783a16bfe319f0cf218d49ce15ac3') { throw 'STOP_V2_LAUNCHER_REPO_HASH' }
+          $launcherBlob = (git -C $env:GITHUB_WORKSPACE rev-parse "$head`:$launcherRel").Trim()
+          if ($LASTEXITCODE -ne 0 -or $launcherBlob -ne '9b88f5f09828c1731fb7968b46dc379c27d18e60') { throw "STOP_V2_LAUNCHER_GIT_BLOB blob=$launcherBlob" }
 
           $inputs = Join-Path $env:RUNNER_TEMP 'bb-clean1-inputs'
           New-Item -ItemType Directory -Path $inputs -Force | Out-Null
@@ -59,8 +61,13 @@ jobs:
           Copy-Item -LiteralPath $ready -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip')
           Copy-Item -LiteralPath $fix -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip')
 
+          # actions/checkout on Windows may materialize text as CRLF. Authenticate the immutable
+          # Git blob first, then reconstruct the contract-authorized canonical LF bytes in temp.
+          $launcherText = [IO.File]::ReadAllText($launcher)
+          $launcherText = $launcherText.Replace("`r`n", "`n")
+          if ($launcherText.Contains("`r")) { throw 'STOP_V2_LAUNCHER_EOL_UNEXPECTED' }
           $launcherStaged = Join-Path $env:RUNNER_TEMP 'run_blackbox_contract_v2.ps1'
-          Copy-Item -LiteralPath $launcher -Destination $launcherStaged
+          [IO.File]::WriteAllText($launcherStaged, $launcherText, [Text.UTF8Encoding]::new($false))
           if ((Get-FileHash -LiteralPath $launcherStaged -Algorithm SHA256).Hash.ToLowerInvariant() -ne '71d6d3f20ddf81881d0d3a9c7eb25dbd6ca783a16bfe319f0cf218d49ce15ac3') { throw 'STOP_V2_LAUNCHER_STAGE_HASH' }
 
           $effective = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V2_EFFECTIVE.ps1'
