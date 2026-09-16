@@ -1,0 +1,360 @@
+diff --git a/src/video_core/renderer_vulkan/vk_scheduler.cpp b/src/video_core/renderer_vulkan/vk_scheduler.cpp
+--- a/src/video_core/renderer_vulkan/vk_scheduler.cpp
++++ b/src/video_core/renderer_vulkan/vk_scheduler.cpp
+@@ -17,7 +17,9 @@ std::mutex Scheduler::submit_mutex;
+ Scheduler::Scheduler(const Instance& instance)
+     : instance{instance}, master_semaphore{instance}, command_pool{instance, &master_semaphore} {
+     Common::Blackbox::EmitCoreIdentityOnce();
+-    bb_gpu_trace = std::make_unique<BlackboxGpuTrace>(instance);
++    if (Common::Blackbox::Recorder::Instance().Enabled()) {
++        bb_gpu_trace = std::make_unique<BlackboxGpuTrace>(instance);
++    }
+ #if TRACY_GPU_ENABLED
+     profiler_scope = reinterpret_cast<tracy::VkCtxScope*>(std::malloc(sizeof(tracy::VkCtxScope)));
+ #endif
+@@ -123,6 +125,9 @@ void Scheduler::Wait(u64 tick) {
+         Flush();
+     }
+     master_semaphore.Wait(tick);
++    if (bb_gpu_trace) {
++        bb_gpu_trace->Poll(master_semaphore.KnownGpuTick());
++    }
+ }
+ 
+ void Scheduler::PopPendingOperations() {
+@@ -164,6 +169,10 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
+     std::scoped_lock lk{submit_mutex};
+     const u64 signal_value = master_semaphore.NextTick();
+-    const u64 submit_id = ++bb_submit_seq;
++    const u64 local_submit_id = ++bb_submit_seq;
++    const u64 submit_id = bb_gpu_trace
++                              ? (static_cast<u64>(bb_gpu_trace->SchedulerId()) << 32) |
++                                    (local_submit_id & 0xFFFFFFFFULL)
++                              : local_submit_id;
+     if (bb_gpu_trace) {
+         Common::Blackbox::Recorder::Instance().Emit(
+             Common::Blackbox::EventId::Submit,
+diff --git a/src/core/libraries/videoout/driver.cpp b/src/core/libraries/videoout/driver.cpp
+--- a/src/core/libraries/videoout/driver.cpp
++++ b/src/core/libraries/videoout/driver.cpp
+@@ -242,12 +242,6 @@ void VideoOutDriver::Flip(const Request& req) {
+ 
+     // Present the frame.
+     presenter->Present(req.frame);
+-    Common::Blackbox::Recorder::Instance().Emit(
+-        Common::Blackbox::EventId::FrameDisplay,
+-        Common::Blackbox::Site::VideoOutFlip,
+-        Common::Blackbox::EventFlags::Success,
+-        Common::Blackbox::PayloadKind::Frame,
+-        static_cast<u64>(req.index), static_cast<u64>(req.flip_arg), req.eop ? 1 : 0);
+ 
+     // Update flip status.
+     auto* port = req.port;
+@@ -337,12 +330,14 @@ bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,
+ }
+ 
+ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop) {
+     auto& bb_rec = Common::Blackbox::Recorder::Instance();
+-    const u32 bb_frame_hint = bb_rec.NextGuestFrame();
++    const bool bb_is_blank = index == -1;
++    const u32 bb_frame_hint = bb_is_blank ? 0 : bb_rec.NextGuestFrame();
+     Common::Blackbox::ScopedFrameHint bb_frame_scope{bb_frame_hint};
+     bb_rec.Emit(Common::Blackbox::EventId::FrameSubmit,
+                 Common::Blackbox::Site::VideoOutSubmitFlip,
+-                Common::Blackbox::EventFlags::None,
++                bb_is_blank ? Common::Blackbox::EventFlags::Unknown
++                            : Common::Blackbox::EventFlags::None,
+                 Common::Blackbox::PayloadKind::Frame,
+                 static_cast<u64>(index), static_cast<u64>(flip_arg), is_eop ? 1 : 0);
+     Vulkan::Frame* frame;
+diff --git a/src/video_core/renderer_vulkan/vk_presenter.cpp b/src/video_core/renderer_vulkan/vk_presenter.cpp
+--- a/src/video_core/renderer_vulkan/vk_presenter.cpp
++++ b/src/video_core/renderer_vulkan/vk_presenter.cpp
+@@ -862,15 +862,6 @@ Frame* Presenter::PrepareBlankFrame(bool present_thread) {
+ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
+     Common::Blackbox::ScopedFrameHint bb_frame_scope{
+         frame != nullptr ? frame->bb_frame_hint : 0};
+-    auto& bb_rec = Common::Blackbox::Recorder::Instance();
+-    bb_rec.Emit(Common::Blackbox::EventId::FramePresent,
+-                Common::Blackbox::Site::PresenterPresent,
+-                is_reusing_frame ? Common::Blackbox::EventFlags::ReusedFrame
+-                                 : Common::Blackbox::EventFlags::None,
+-                Common::Blackbox::PayloadKind::Frame,
+-                frame != nullptr ? frame->width : 0,
+-                frame != nullptr ? frame->height : 0,
+-                is_reusing_frame ? 1 : 0);
+     // Free the frame for reuse
+     const auto free_frame = [&] {
+         if (!is_reusing_frame) {
+@@ -1130,7 +1120,8 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
+ 
+     // Present to swapchain.
++    auto& bb_rec = Common::Blackbox::Recorder::Instance();
++    bool bb_present_ok = false;
+     {
+         std::scoped_lock submit_lock{Scheduler::submit_mutex};
+-        bool bb_present_ok = false;
+         {
+             Common::Blackbox::ScopedEvent bb_present_scope{
+@@ -1140,8 +1133,17 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
+         if (!bb_present_ok) {
+             swapchain.Recreate(window.GetWidth(), window.GetHeight());
+         }
+     }
++    const auto bb_present_flags =
++        (bb_present_ok ? Common::Blackbox::EventFlags::Success
++                       : Common::Blackbox::EventFlags::None) |
++        (is_reusing_frame ? Common::Blackbox::EventFlags::ReusedFrame
++                          : Common::Blackbox::EventFlags::None);
++    bb_rec.Emit(Common::Blackbox::EventId::FramePresent,
++                Common::Blackbox::Site::PresenterPresent, bb_present_flags,
++                Common::Blackbox::PayloadKind::Frame, frame != nullptr ? frame->width : 0,
++                frame != nullptr ? frame->height : 0, is_reusing_frame ? 1 : 0);
+ }
+ 
+ Frame* Presenter::GetRenderFrame() {
+ 
+diff --git a/src/video_core/renderer_vulkan/bb_gpu_trace.cpp b/src/video_core/renderer_vulkan/bb_gpu_trace.cpp
+--- a/src/video_core/renderer_vulkan/bb_gpu_trace.cpp
++++ b/src/video_core/renderer_vulkan/bb_gpu_trace.cpp
+@@ -7,6 +7,7 @@
+ #include <atomic>
+ #include <bit>
+ #include <cstdint>
++#include <limits>
+ 
+ #include "common/bb_blackbox/recorder.h"
+ #include "video_core/renderer_vulkan/vk_instance.h"
+@@ -66,6 +67,8 @@
+ }
+ 
+ BlackboxGpuTrace::~BlackboxGpuTrace() {
++    // Final non-blocking collection only. Never wait for GPU work during telemetry shutdown.
++    Poll(std::numeric_limits<std::uint64_t>::max());
+     if (pending_count_ != 0) {
+         Common::Blackbox::Recorder::Instance().CountLoss(
+             Common::Blackbox::LossKind::GpuQueryUnresolvedOnShutdown, pending_count_);
+@@ -212,12 +215,19 @@
+         return;
+     }
+ 
+-    // Only completed timeline ticks are queried. No WAIT_BIT, no waitIdle and no Finish.
+-    while (pending_count_ != 0) {
++    // Scan only the entries that were pending on entry. Unavailable entries are requeued so one
++    // delayed query cannot head-of-line block later completed queries. This is strictly non-blocking:
++    // no WAIT_BIT, waitIdle, Finish or artificial submission is introduced.
++    const std::uint32_t scan_count = pending_count_;
++    for (std::uint32_t scan = 0; scan < scan_count && pending_count_ != 0; ++scan) {
+         const std::uint32_t slot_index = pending_ring_[pending_head_];
++        pending_head_ = (pending_head_ + 1) % PairCount;
++        --pending_count_;
++
+         auto& slot = slots_[slot_index];
+         if (slot.tick > known_gpu_tick) {
+-            break;
++            PushPending(slot_index);
++            continue;
+         }
+ 
+         std::array<std::uint64_t, 4> values{};
+@@ -233,13 +243,11 @@
+             if (result != vk::Result::eSuccess && result != vk::Result::eNotReady) {
+                 Common::Blackbox::Recorder::Instance().CountLoss(
+                     Common::Blackbox::LossKind::GpuQueryReadError);
+-                pending_head_ = (pending_head_ + 1) % PairCount;
+-                --pending_count_;
+                 ReleasePair(slot_index);
+                 continue;
+             }
+-            // Timeline completion should normally imply timestamp availability, but do not spin/wait.
+-            break;
++            PushPending(slot_index);
++            continue;
+         }
+ 
+         Common::Blackbox::Recorder::Instance().EmitWithContext(
+@@ -252,8 +260,6 @@
+                 static_cast<std::uint64_t>(timestamp_valid_bits_ & 0xFFFFu),
+             values[0], values[2]);
+ 
+-        pending_head_ = (pending_head_ + 1) % PairCount;
+-        --pending_count_;
+         ReleasePair(slot_index);
+     }
+ }
+diff --git a/tools/bb_blackbox/recorder_main.cpp b/tools/bb_blackbox/recorder_main.cpp
+--- a/tools/bb_blackbox/recorder_main.cpp
++++ b/tools/bb_blackbox/recorder_main.cpp
+@@ -368,18 +368,25 @@
+         }
+ 
+         producer_exited = consumer.ProducerExitedFlag();
++        bool producer_quiesced = producer_exited;
+ #ifdef _WIN32
+-        if (!producer_exited && producer_process != nullptr &&
+-            WaitForSingleObject(producer_process, 0) == WAIT_OBJECT_0) {
+-            producer_exited = true;
++        if (producer_process != nullptr) {
++            producer_quiesced = WaitForSingleObject(producer_process, 0) == WAIT_OBJECT_0;
++            if (producer_quiesced) {
++                producer_exited = true;
++            }
+         }
+ #endif
+ 
+-        if (producer_seen && producer_exited) {
+-            // Drain twice after exit to consume all release-published records.
+-            for (int pass = 0; pass < 2; ++pass) {
++        if (producer_seen && producer_quiesced) {
++            // Process termination is the quiescence proof. Drain until empty; a fixed pass count
++            // can truncate a release-published tail larger than MaxChunkEvents * N.
++            for (;;) {
+                 const std::size_t tail = consumer.Drain(buffer);
+-                if (tail != 0 && !write_events(std::span{buffer.data(), tail})) {
++                if (tail == 0) {
++                    break;
++                }
++                if (!write_events(std::span{buffer.data(), tail})) {
+                     result = 9;
+                     terminal_reason = "tail_segment_write_error";
+                     break;
+diff --git a/tools/bb_blackbox/decode.py b/tools/bb_blackbox/decode.py
+--- a/tools/bb_blackbox/decode.py
++++ b/tools/bb_blackbox/decode.py
+@@ -209,14 +209,18 @@
+         "backing_commit_failure": 0,
+         "known_guest_frames": set(),
+         "present_count": 0,
++        "present_success_count": 0,
++        "present_failure_count": 0,
+         "reused_present_count": 0,
+         "orphan_present_count": 0,
+         "cpu_gpu_region_marker_count": 0,
+         "gpu_query_available_count": 0,
+         "gpu_query_unknown_period_count": 0,
+-        "gpu_duration_ns_total": 0.0,
++        "gpu_region_duration_ns_sum": 0.0,
++        "gpu_command_buffer_envelope_ns_total": 0.0,
+         "gpu_duration_ns_by_category": {},
+         "gpu_query_count_by_category": {},
++        "submit_identity_collision_count": 0,
+         "loss_count": 0,
+     }
+ 
+@@ -291,12 +295,18 @@
+         elif eid == EV_SUBMIT and (flags & ((1 << 0) | (1 << 1))) == 0:
+             queue_id = int((e["arg2"] >> 32) & 0xFFFFFFFF)
+             scheduler_id = int(e["arg2"] & 0xFFFFFFFF)
+-            submits[int(e["arg1"])] = {
+-                "tick": int(e["arg0"]),
+-                "queue_id": queue_id,
+-                "scheduler_id": scheduler_id,
+-                "frame_hint": int(e["frame_hint"]),
+-            }
++            submit_id = int(e["arg1"])
++            if submit_id in submits:
++                # Never silently replace one scheduler's submit with another. Correct producers use
++                # a process-unique submit identity; a collision makes causal joins ambiguous.
++                s["submit_identity_collision_count"] += 1
++            else:
++                submits[submit_id] = {
++                    "tick": int(e["arg0"]),
++                    "queue_id": queue_id,
++                    "scheduler_id": scheduler_id,
++                    "frame_hint": int(e["frame_hint"]),
++                }
+ 
+         elif eid == EV_FRAME_SUBMIT:
+             if e["frame_hint"] != 0:
+@@ -304,11 +314,15 @@
+ 
+         elif eid == EV_FRAME_PRESENT:
+             s["present_count"] += 1
++            if flags & FLAG_SUCCESS:
++                s["present_success_count"] += 1
++            else:
++                s["present_failure_count"] += 1
+             if flags & FLAG_REUSED:
+                 s["reused_present_count"] += 1
+             if e["frame_hint"] == 0:
+                 s["orphan_present_count"] += 1
+-            # Present never creates a guest frame identity.
++            # Present is a host attempt/result and never creates a guest frame identity.
+ 
+         elif eid == EV_READBACK_REQUEST:
+             s["readback_request_count"] += 1
+@@ -365,7 +379,11 @@
+             duration_ns = float(delta_ticks) * float(period_ns)
+ 
+             key = str(category)
+-            s["gpu_duration_ns_total"] += duration_ns
++            # This is an additive sum of sampled regions, not elapsed/exclusive GPU time. Nested
++            # regions may overlap the command-buffer envelope and must not be sold as frame cost.
++            s["gpu_region_duration_ns_sum"] += duration_ns
++            if category == 1:  # CommandBufferEnvelope
++                s["gpu_command_buffer_envelope_ns_total"] += duration_ns
+             s["gpu_duration_ns_by_category"][key] = \
+                 s["gpu_duration_ns_by_category"].get(key, 0.0) + duration_ns
+             s["gpu_query_count_by_category"][key] = \
+@@ -385,7 +403,9 @@
+ 
+     s["known_guest_frame_count"] = len(s.pop("known_guest_frames"))
+     s["capture_loss_free"] = s["loss_count"] == 0
+-    s["gpu_duration_ms_total"] = s.pop("gpu_duration_ns_total") / 1_000_000.0
++    s["gpu_region_duration_ms_sum"] = s.pop("gpu_region_duration_ns_sum") / 1_000_000.0
++    s["gpu_command_buffer_envelope_ms_total"] = \
++        s.pop("gpu_command_buffer_envelope_ns_total") / 1_000_000.0
+     s["gpu_duration_ms_by_category"] = {
+         k: v / 1_000_000.0 for k, v in s.pop("gpu_duration_ns_by_category").items()
+     }
+@@ -460,12 +480,40 @@
+     assert summary["known_guest_frame_count"] == 1, summary
+     assert summary["orphan_present_count"] == 1, summary
+     assert summary["gpu_query_available_count"] == 1, summary
+-    assert abs(summary["gpu_duration_ms_total"] - 0.0005) < 1e-12, summary
++    assert abs(summary["gpu_region_duration_ms_sum"] - 0.0005) < 1e-12, summary
++    assert abs(summary["gpu_command_buffer_envelope_ms_total"]) < 1e-12, summary
+     assert summary["submit_identity_count"] == 1, summary
++    assert summary["submit_identity_collision_count"] == 0, summary
+     assert summary["gpu_region_identity_count"] == 1, summary
+     assert abs(summary["cpu_duration_ms_by_site"]["185"] - 5.0) < 1e-12, summary
+     assert summary["capture_loss_free"], summary
+ 
++
++    collision_fixture = [
++        {"event_id": EV_SUBMIT, "frame_hint": 1, "arg0": 10, "arg1": 99,
++         "arg2": (1 << 32) | 1, "flags": 0},
++        {"event_id": EV_SUBMIT, "frame_hint": 2, "arg0": 11, "arg1": 99,
++         "arg2": (1 << 32) | 2, "flags": 0},
++    ]
++    collision_summary = summarize(collision_fixture)
++    assert collision_summary["submit_identity_count"] == 1, collision_summary
++    assert collision_summary["submit_identity_collision_count"] == 1, collision_summary
++
++    nested_gpu_fixture = [
++        {"event_id": EV_CAPABILITY, "frame_hint": 0, "arg0": 64,
++         "arg1": 1065353216, "arg2": 7, "flags": 0, "op_id": 1},
++        {"event_id": EV_GPU_QUERY_RESULT, "frame_hint": 3,
++         "arg0": (7 << 32) | (1 << 16) | 64, "arg1": 0, "arg2": 1000,
++         "flags": FLAG_AVAILABLE, "op_id": 2, "parent_id": 0},
++        {"event_id": EV_GPU_QUERY_RESULT, "frame_hint": 3,
++         "arg0": (7 << 32) | (7 << 16) | 64, "arg1": 100, "arg2": 300,
++         "flags": FLAG_AVAILABLE, "op_id": 3, "parent_id": 0},
++    ]
++    nested_gpu_summary = summarize(nested_gpu_fixture)
++    assert abs(nested_gpu_summary["gpu_command_buffer_envelope_ms_total"] - 0.001) < 1e-12, nested_gpu_summary
++    assert abs(nested_gpu_summary["gpu_region_duration_ms_sum"] - 0.0012) < 1e-12, nested_gpu_summary
++    assert "gpu_duration_ms_total" not in nested_gpu_summary, nested_gpu_summary
++
+     rate_fixture = [
+         {"event_id": EV_CAPABILITY, "frame_hint": 0, "arg0": 1000, "arg1": 0,
+          "arg2": 0, "flags": 0, "op_id": 0, "parent_id": 0, "qpc": 0,
+@@ -543,6 +591,8 @@
+         "summary": summary,
+         "rate_summary": rate_summary,
+         "loss_summary": loss_summary,
++        "submit_collision_detection": collision_summary,
++        "nested_gpu_duration_labels": nested_gpu_summary,
+         "tail_tolerance": True,
+         "event_rate_diagnostics": True,
+         "crc_rejection": True,
