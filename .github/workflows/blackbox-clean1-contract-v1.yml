@@ -35,14 +35,35 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $inputs = Join-Path $env:RUNNER_TEMP 'bb-clean1-inputs'
           New-Item -ItemType Directory -Path $inputs -Force | Out-Null
-          $ready = Join-Path $env:GITHUB_WORKSPACE 'ci-inputs\\BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip'
-          $fix = Join-Path $env:GITHUB_WORKSPACE 'ci-inputs\\BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip'
+          $ready = Join-Path $env:GITHUB_WORKSPACE 'ci-inputs\BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip'
+          $fix = Join-Path $env:GITHUB_WORKSPACE 'ci-inputs\BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip'
           if (-not (Test-Path -LiteralPath $ready) -or -not (Test-Path -LiteralPath $fix)) { throw 'STOP_INPUT_UNAVAILABLE' }
           if ((Get-FileHash $ready -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0b709de7e6c588b76786d8b648d5f669563c0bf45df5ec44a63db56f869e795f') { throw 'STOP_INPUT_READY4_HASH' }
           if ((Get-FileHash $fix -Algorithm SHA256).Hash.ToLowerInvariant() -ne '13144512830870296d297ebbe194dd8a2d30d9c8eb57358654b67392a7824308') { throw 'STOP_INPUT_PATCHFIX1_HASH' }
           Copy-Item -LiteralPath $ready -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip')
           Copy-Item -LiteralPath $fix -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip')
-          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE '.github\\contract\\BB_CLEAN1_CONTRACT_V1.ps1') -Destination (Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V1.ps1')
+          $contract = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V1.ps1'
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V1.ps1') -Destination $contract
+          $oldQtGate = @'
+    $QtConf = Join-Path $Src 'dist\qt.conf'; if (-not (Test-Path -LiteralPath $QtConf -PathType Leaf)) { throw 'STOP_S5_QT_CONF' }; Copy-Item -LiteralPath $QtConf -Destination (Join-Path $Runtime 'qt.conf'); if ((Get-Content -LiteralPath $QtConf -Raw) -notmatch '(?im)^\s*Plugins\s*=\s*qtplugins\s*$') { throw 'STOP_LAYOUT qt.conf plugins' }
+'@
+          $newQtGate = @'
+    $QtConf = Join-Path $Src 'dist\qt.conf'
+    if (-not (Test-Path -LiteralPath $QtConf -PathType Leaf)) { throw 'STOP_S5_QT_CONF' }
+    $RuntimeQtConf = Join-Path $Runtime 'qt.conf'
+    Copy-Item -LiteralPath $QtConf -Destination $RuntimeQtConf
+    $QtConfText = Get-Content -LiteralPath $RuntimeQtConf -Raw
+    if ($QtConfText -notmatch '(?im)^\s*\[Paths\]\s*$' -or $QtConfText -notmatch '(?im)^\s*plugins\s*=\s*"\./qtplugins"\s*$') { throw 'STOP_LAYOUT qt.conf source' }
+    [IO.File]::WriteAllText($RuntimeQtConf, "[Paths]`r`nPlugins = qtplugins`r`n", [Text.UTF8Encoding]::new($false))
+    if ((Get-Content -LiteralPath $RuntimeQtConf -Raw) -notmatch '(?im)^\s*Plugins\s*=\s*qtplugins\s*$') { throw 'STOP_LAYOUT qt.conf plugins' }
+'@
+          $contractText = [IO.File]::ReadAllText($contract)
+          if ([regex]::Matches($contractText, [regex]::Escape($oldQtGate)).Count -ne 1) { throw 'STOP_CI_CONTRACT_PATCH_CARDINALITY qt.conf' }
+          $contractText = $contractText.Replace($oldQtGate, $newQtGate)
+          [IO.File]::WriteAllText($contract, $contractText, [Text.UTF8Encoding]::new($false))
+          $tokens = $null; $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($contract, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -ne 0) { throw "STOP_CI_CONTRACT_PATCH_PARSE $($parseErrors[0].Message)" }
           "WORKFLOW_HEAD=${{ github.event.pull_request.head.sha || github.sha }}" | Add-Content -LiteralPath $env:GITHUB_ENV
 
       - name: Checkout frozen harness 184e040d
@@ -100,7 +121,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: BLACKBOX_V1_CI_CLEAN1_CONTRACT_V1_WIN64_QT
-          path: ${{ runner.temp }}\\bb-clean1-contract-v1\\BB_CLEAN1_WIN64_QT.zip
+          path: ${{ runner.temp }}\bb-clean1-contract-v1\BB_CLEAN1_WIN64_QT.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -109,6 +130,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: BLACKBOX_V1_CI_CLEAN1_CONTRACT_V1_DIAGNOSTICS
-          path: ${{ runner.temp }}\\bb-clean1-contract-v1\\diagnostics
+          path: ${{ runner.temp }}\bb-clean1-contract-v1\diagnostics
           if-no-files-found: error
           retention-days: 14
