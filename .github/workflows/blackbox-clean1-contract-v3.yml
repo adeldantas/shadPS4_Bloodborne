@@ -86,7 +86,7 @@ jobs:
           $v3DriverRel = '.github/contract/BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
           $v3Driver = Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
           $v3DriverBlob = (git -C $env:GITHUB_WORKSPACE rev-parse "$head`:$v3DriverRel").Trim()
-          if ($LASTEXITCODE -ne 0 -or $v3DriverBlob -ne '609203134a50b8b1fd48d5785f6179696a055c60') { throw "STOP_V3_DRIVER_GIT_BLOB blob=$v3DriverBlob" }
+          if ($LASTEXITCODE -ne 0 -or $v3DriverBlob -ne '9c74f7e09cb6418380a8a5b5a13960f9b3f464fe') { throw "STOP_V3_DRIVER_GIT_BLOB blob=$v3DriverBlob" }
           $v3DriverStaged = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
           $v3DriverText = [IO.File]::ReadAllText($v3Driver).Replace("`r`n", "`n")
           if ($v3DriverText.Contains("`r")) { throw 'STOP_V3_DRIVER_STAGE unexpected_cr' }
