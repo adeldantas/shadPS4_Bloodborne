@@ -19,6 +19,12 @@ $WorkMatches = [regex]::Matches($Text, $WorkPattern)
 if ($WorkMatches.Count -ne 1) { throw "STOP_V3_WORKDIR_PATCH_CARDINALITY count=$($WorkMatches.Count)" }
 $Text = [regex]::Replace($Text, $WorkPattern, 'bb-clean1-contract-v3', 1)
 
+# V3-only runner repin. These are the only identities that drifted on the audited
+# windows-2022 image; VCTools, SDK, CMake, Ninja, Python and Qt remain frozen by V1 gates.
+$Text = Replace-ExactlyOnce $Text "if (`$env:ImageVersion -ne '20260907.297.1')" "if (`$env:ImageVersion -ne '20260913.307.1')" 'STOP_V3_IMAGE_VERSION_REPIN_CARDINALITY'
+$Text = Replace-ExactlyOnce $Text "if (`$VsVersion -ne '17.14.37614.0')" "if (`$VsVersion -ne '17.14.37628.2')" 'STOP_V3_VS_VERSION_REPIN_CARDINALITY'
+$Text = Replace-ExactlyOnce $Text "if (`$PSVersionTable.PSVersion.ToString() -ne '7.6.5')" "if (`$PSVersionTable.PSVersion.ToString() -ne '7.6.6')" 'STOP_V3_PS_VERSION_REPIN_CARDINALITY'
+
 $AuditAnchor = @'
     $AuditPath = Join-Path $Src 'clean1_static_audit.json'; if (-not (Test-Path -LiteralPath $AuditPath)) { throw 'STOP_S2_AUDIT_MISSING' }; $Audit = Get-Content -LiteralPath $AuditPath -Raw | ConvertFrom-Json; if ($Audit.pass -ne $true) { throw 'STOP_S2_AUDIT_FAIL' }; Copy-Item -LiteralPath $AuditPath -Destination (Join-Path $Diag 'clean1_static_audit.json')
 '@
