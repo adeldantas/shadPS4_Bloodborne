@@ -90,6 +90,9 @@ jobs:
       - name: Execute CLEAN1 contract S0-S8
         shell: pwsh
         run: |
+          $env:GIT_CONFIG_COUNT = '1'
+          $env:GIT_CONFIG_KEY_0 = 'core.symlinks'
+          $env:GIT_CONFIG_VALUE_0 = 'false'
           & (Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V1.ps1') -WorkflowHead $env:WORKFLOW_HEAD
 
       - name: Upload runnable CLEAN1 package
