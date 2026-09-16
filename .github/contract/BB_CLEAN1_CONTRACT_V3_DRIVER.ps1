@@ -14,7 +14,10 @@ function Replace-ExactlyOnce([string]$Text, [string]$Old, [string]$New, [string]
 
 if (-not (Test-Path -LiteralPath $SourceContract -PathType Leaf)) { throw 'STOP_V3_SOURCE_CONTRACT_MISSING' }
 $Text = [IO.File]::ReadAllText($SourceContract)
-$Text = Replace-ExactlyOnce $Text "'bb-clean1-contract-v2'" "'bb-clean1-contract-v3'" 'STOP_V3_WORKDIR_PATCH_CARDINALITY'
+$WorkPattern = "bb-clean1-contract-v[12]"
+$WorkMatches = [regex]::Matches($Text, $WorkPattern)
+if ($WorkMatches.Count -ne 1) { throw "STOP_V3_WORKDIR_PATCH_CARDINALITY count=$($WorkMatches.Count)" }
+$Text = [regex]::Replace($Text, $WorkPattern, 'bb-clean1-contract-v3', 1)
 
 $AuditAnchor = @'
     $AuditPath = Join-Path $Src 'clean1_static_audit.json'; if (-not (Test-Path -LiteralPath $AuditPath)) { throw 'STOP_S2_AUDIT_MISSING' }; $Audit = Get-Content -LiteralPath $AuditPath -Raw | ConvertFrom-Json; if ($Audit.pass -ne $true) { throw 'STOP_S2_AUDIT_FAIL' }; Copy-Item -LiteralPath $AuditPath -Destination (Join-Path $Diag 'clean1_static_audit.json')
