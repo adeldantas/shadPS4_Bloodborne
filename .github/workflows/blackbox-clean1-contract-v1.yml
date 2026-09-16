@@ -81,6 +81,12 @@ jobs:
           python-version: "3.12.10"
           architecture: "x64"
 
+      - name: Pin canonical Git archive line endings
+        shell: pwsh
+        run: |
+          git -C $env:GITHUB_WORKSPACE config --local core.autocrlf false
+          if ($LASTEXITCODE -ne 0) { throw 'STOP_S0_GIT_EOL_CONFIG' }
+
       - name: Execute CLEAN1 contract S0-S8
         shell: pwsh
         run: |
