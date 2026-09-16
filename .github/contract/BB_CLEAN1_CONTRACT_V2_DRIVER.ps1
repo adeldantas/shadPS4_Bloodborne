@@ -19,7 +19,7 @@ $OldWork = "'bb-clean1-contract-v1'"
 $NewWork = "'bb-clean1-contract-v2'"
 $Text = Replace-ExactlyOnce $Text $OldWork $NewWork 'STOP_V2_WORKDIR_PATCH_CARDINALITY'
 
-$AuditAnchor = "    if (`$env:ImageVersion -ne '20260907.297.1') { throw \"STOP_ENVIRONMENT_IDENTITY ImageVersion=`$env:ImageVersion\" }"
+$AuditAnchor = '    if ($env:ImageVersion -ne ''20260907.297.1'') { throw "STOP_ENVIRONMENT_IDENTITY ImageVersion=$env:ImageVersion" }'
 $AuditBlock = @'
     $AuditVsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
     $AuditVsVersion = (& $AuditVsWhere -latest -products * -property installationVersion | Out-String).Trim()
