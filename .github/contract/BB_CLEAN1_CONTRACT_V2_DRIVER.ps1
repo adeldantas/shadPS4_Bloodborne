@@ -19,6 +19,33 @@ $OldWork = "'bb-clean1-contract-v1'"
 $NewWork = "'bb-clean1-contract-v2'"
 $Text = Replace-ExactlyOnce $Text $OldWork $NewWork 'STOP_V2_WORKDIR_PATCH_CARDINALITY'
 
+$AuditAnchor = "    if (`$env:ImageVersion -ne '20260907.297.1') { throw \"STOP_ENVIRONMENT_IDENTITY ImageVersion=`$env:ImageVersion\" }"
+$AuditBlock = @'
+    $AuditVsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+    $AuditVsVersion = (& $AuditVsWhere -latest -products * -property installationVersion | Out-String).Trim()
+    $AuditCMakeVersion = (& $CMake --version | Select-Object -First 1)
+    $AuditNinjaVersion = (& $Ninja --version | Out-String).Trim()
+    $AuditPyIdentity = & $Python -c 'import sys,struct;print("%d.%d.%d"%sys.version_info[:3]);print(struct.calcsize("P")*8)'
+    $AuditQtVersion = (& (Join-Path $Qt 'bin\qmake.exe') -query QT_VERSION | Out-String).Trim()
+    $AuditLines = @(
+        "image_version=$env:ImageVersion",
+        "powershell=$($PSVersionTable.PSVersion)",
+        "vs=$AuditVsVersion",
+        "vctools=$($env:VCToolsVersion.TrimEnd('\'))",
+        "sdk=$($env:WindowsSDKVersion.TrimEnd('\'))",
+        "cmake=$AuditCMakeVersion",
+        "ninja=$AuditNinjaVersion",
+        "ninja_sha256=$(Get-Sha256 $Ninja)",
+        "python=$($AuditPyIdentity -join '/')",
+        "python_sha256=$(Get-Sha256 $Python)",
+        "qt=$AuditQtVersion",
+        "qt_root=$Qt"
+    )
+    Write-Diag 'runner-identity-audit.txt' $AuditLines
+    foreach ($AuditLine in $AuditLines) { Write-Host "RUNNER_AUDIT $AuditLine" }
+'@
+$Text = Replace-ExactlyOnce $Text $AuditAnchor ($AuditBlock.TrimEnd("`r","`n") + "`n" + $AuditAnchor) 'STOP_V2_AUDIT_PATCH_CARDINALITY'
+
 $OldQtGate = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ICAgICRRdENvbmYgPSBKb2luLVBhdGggJFNyYyAnZGlzdFxxdC5jb25mJzsgaWYgKC1ub3QgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJFF0Q29uZiAtUGF0aFR5cGUgTGVhZikpIHsgdGhyb3cgJ1NUT1BfUzVfUVRfQ09ORicgfTsgQ29weS1JdGVtIC1MaXRlcmFsUGF0aCAkUXRDb25mIC1EZXN0aW5hdGlvbiAoSm9pbi1QYXRoICRSdW50aW1lICdxdC5jb25mJyk7IGlmICgoR2V0LUNvbnRlbnQgLUxpdGVyYWxQYXRoICRRdENvbmYgLVJhdykgLW5vdG1hdGNoICcoP2ltKV5ccypQbHVnaW5zXHMqPVxzKnF0cGx1Z2luc1xzKiQnKSB7IHRocm93ICdTVE9QX0xBWU9VVCBxdC5jb25mIHBsdWdpbnMnIH0='))
 $NewQtGate = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('ICAgICRRdENvbmYgPSBKb2luLVBhdGggJFNyYyAnZGlzdFxxdC5jb25mJwogICAgaWYgKC1ub3QgKFRlc3QtUGF0aCAtTGl0ZXJhbFBhdGggJFF0Q29uZiAtUGF0aFR5cGUgTGVhZikpIHsgdGhyb3cgJ1NUT1BfUzVfUVRfQ09ORicgfQogICAgJFJ1bnRpbWVRdENvbmYgPSBKb2luLVBhdGggJFJ1bnRpbWUgJ3F0LmNvbmYnCiAgICBDb3B5LUl0ZW0gLUxpdGVyYWxQYXRoICRRdENvbmYgLURlc3RpbmF0aW9uICRSdW50aW1lUXRDb25mCiAgICAkUXRDb25mVGV4dCA9IEdldC1Db250ZW50IC1MaXRlcmFsUGF0aCAkUnVudGltZVF0Q29uZiAtUmF3CiAgICBpZiAoJFF0Q29uZlRleHQgLW5vdG1hdGNoICcoP2ltKV5ccypcW1BhdGhzXF1ccyokJyAtb3IgJFF0Q29uZlRleHQgLW5vdG1hdGNoICcoP2ltKV5ccypwbHVnaW5zXHMqPVxzKiJcLi9xdHBsdWdpbnMiXHMqJCcpIHsgdGhyb3cgJ1NUT1BfTEFZT1VUIHF0LmNvbmYgc291cmNlJyB9CiAgICBbSU8uRmlsZV06OldyaXRlQWxsVGV4dCgkUnVudGltZVF0Q29uZiwgIltQYXRoc11gcmBuUGx1Z2lucyA9IHF0cGx1Z2luc2ByYG4iLCBbVGV4dC5VVEY4RW5jb2RpbmddOjpuZXcoJGZhbHNlKSkKICAgIGlmICgoR2V0LUNvbnRlbnQgLUxpdGVyYWxQYXRoICRSdW50aW1lUXRDb25mIC1SYXcpIC1ub3RtYXRjaCAnKD9pbSleXHMqUGx1Z2luc1xzKj1ccypxdHBsdWdpbnNccyokJykgeyB0aHJvdyAnU1RPUF9MQVlPVVQgcXQuY29uZiBwbHVnaW5zJyB9'))
 $Text = Replace-ExactlyOnce $Text $OldQtGate $NewQtGate 'STOP_V2_QT_PATCH_CARDINALITY'
