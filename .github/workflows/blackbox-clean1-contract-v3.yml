@@ -85,7 +85,7 @@ jobs:
 
           $v3Driver = Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
           $v3DriverStaged = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
-          Stage-CanonicalText $v3Driver $v3DriverStaged 'b4d5c550c97fc47117a4a8527bdd320fbf1bc5f85f474cf4ce1f40a2f680014d' 'STOP_V3_DRIVER_STAGE_HASH'
+          Stage-CanonicalText $v3Driver $v3DriverStaged '1ba8ae4ee251043017417414b4571843cceda6baa043c9869deeae837359ad47' 'STOP_V3_DRIVER_STAGE_HASH'
 
           $v2Effective = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V2_EFFECTIVE.ps1'
           & $v2Driver -SourceContract $v1 -OutputContract $v2Effective
