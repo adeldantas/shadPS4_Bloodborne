@@ -52,7 +52,7 @@ jobs:
 
       - name: Exact replay, Windows build, package and synthetic smoke
         shell: pwsh
-        run: ./.bbx/ci/bootstrap_minimal.ps1
+        run: ./.bbx/ci/bootstrap_minimal_driver.ps1
 
       - name: Upload runnable CLEAN1 package
         if: success()
