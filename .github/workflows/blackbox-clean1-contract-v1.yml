@@ -1,0 +1,99 @@
+name: BLACKBOX CLEAN1 contract V1
+
+on:
+  pull_request:
+    branches:
+      - Shadlix
+    paths:
+      - "ci-inputs/BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip"
+      - "ci-inputs/BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blackbox-clean1-contract-v1-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-clean1-contract:
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout workflow head and authenticated inputs
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Stage exact ZIP inputs and contract executor
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputs = Join-Path $env:RUNNER_TEMP 'bb-clean1-inputs'
+          New-Item -ItemType Directory -Path $inputs -Force | Out-Null
+          $ready = Join-Path $env:GITHUB_WORKSPACE 'ci-inputs\BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip'
+          $fix = Join-Path $env:GITHUB_WORKSPACE 'ci-inputs\BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip'
+          if (-not (Test-Path -LiteralPath $ready) -or -not (Test-Path -LiteralPath $fix)) { throw 'STOP_INPUT_UNAVAILABLE' }
+          if ((Get-FileHash $ready -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0b709de7e6c588b76786d8b648d5f669563c0bf45df5ec44a63db56f869e795f') { throw 'STOP_INPUT_READY4_HASH' }
+          if ((Get-FileHash $fix -Algorithm SHA256).Hash.ToLowerInvariant() -ne '13144512830870296d297ebbe194dd8a2d30d9c8eb57358654b67392a7824308') { throw 'STOP_INPUT_PATCHFIX1_HASH' }
+          Copy-Item -LiteralPath $ready -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip')
+          Copy-Item -LiteralPath $fix -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip')
+          Copy-Item -LiteralPath (Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V1.ps1') -Destination (Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V1.ps1')
+          "WORKFLOW_HEAD=${{ github.event.pull_request.head.sha || github.sha }}" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+      - name: Checkout frozen harness 184e040d
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 184e040de310f54024866adc6d5aa540d495a5fa
+          fetch-depth: 0
+          submodules: false
+          clean: true
+
+      - name: Setup Python 3.12.10 x64
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+
+      - name: Setup Visual Studio 2022 x64 shell
+        uses: egor-tensin/vs-shell@54e4148eac794e4580591c2e0b7750f14b7891fc
+        with:
+          arch: x64
+
+      - name: Setup Qt 6.9.3
+        uses: jurplel/install-qt-action@bcb88e3bed2e992f5f9e24c0f9e364a231d278eb
+        with:
+          version: 6.9.3
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          archives: qtbase qttools
+          modules: qtmultimedia
+          cache: true
+
+      - name: Execute CLEAN1 contract S0-S8
+        shell: pwsh
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V1.ps1') -WorkflowHead $env:WORKFLOW_HEAD
+
+      - name: Upload runnable CLEAN1 package
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_CONTRACT_V1_WIN64_QT
+          path: ${{ runner.temp }}\bb-clean1-contract-v1\BB_CLEAN1_WIN64_QT.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_CONTRACT_V1_DIAGNOSTICS
+          path: ${{ runner.temp }}\bb-clean1-contract-v1\diagnostics
+          if-no-files-found: error
+          retention-days: 14
