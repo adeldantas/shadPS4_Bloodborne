@@ -30,7 +30,7 @@ $CaptureFixBlock = @'
     if ([string]::IsNullOrWhiteSpace($CaptureFixSource) -or -not (Test-Path -LiteralPath $CaptureFixSource -PathType Leaf)) { throw 'STOP_V3_CAPTURE_FIX_MISSING' }
     if ([string]::IsNullOrWhiteSpace($CaptureAuditSource) -or -not (Test-Path -LiteralPath $CaptureAuditSource -PathType Leaf)) { throw 'STOP_V3_CAPTURE_AUDIT_MISSING' }
     Assert-Hash $CaptureFixSource '4fa2e0a52e285c5f51d4e10b9c7d13a156c3eabe75b4d00cc0cffde09ba0fc9c' 'STOP_V3_CAPTURE_FIX_HASH'
-    Assert-Hash $CaptureAuditSource 'ffea0d0a7161dd097638e9cb2253a62c0620ea0525b2a7985f6d4ce9d1ecfdd6' 'STOP_V3_CAPTURE_AUDIT_HASH'
+    Assert-Hash $CaptureAuditSource '0cd328d6d21a2895c51cd176a8140afd6c64c67502b082838b0abe849773a050' 'STOP_V3_CAPTURE_AUDIT_HASH'
 
     git -C $Src apply --check --whitespace=error-all -- $CaptureFixSource
     Check-Native 'STOP_V3_CAPTURE_FIX_APPLY_CHECK'
