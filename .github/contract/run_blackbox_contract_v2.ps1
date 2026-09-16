@@ -17,7 +17,7 @@ $rec = $null
 $producer = $null
 $oldMapping = [Environment]::GetEnvironmentVariable('BB_BLACKBOX_MAPPING', 'Process')
 try {
-    $recArgs = @((('"' + $mapping + '"')), (('"' + $outDir + '"')))
+    $recArgs = @(('"' + $mapping + '"'), ('"' + $outDir + '"'))
     $rec = Start-Process -FilePath $recorder -ArgumentList $recArgs -PassThru -NoNewWindow
     $null = $rec.Handle
     $statusPath = Join-Path $outDir 'capture_status.json'
