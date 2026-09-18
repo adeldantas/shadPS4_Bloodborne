@@ -96,8 +96,7 @@ diff --git a/src/video_core/renderer_vulkan/vk_presenter.cpp b/src/video_core/re
 -        bool bb_present_ok = false;
          {
              Common::Blackbox::ScopedEvent bb_present_scope{
-@@ -1140,8 +1133,17 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
-         if (!bb_present_ok) {
+@@ -1141,6 +1132,15 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
              swapchain.Recreate(window.GetWidth(), window.GetHeight());
          }
      }
@@ -110,9 +109,9 @@ diff --git a/src/video_core/renderer_vulkan/vk_presenter.cpp b/src/video_core/re
 +                Common::Blackbox::Site::PresenterPresent, bb_present_flags,
 +                Common::Blackbox::PayloadKind::Frame, frame != nullptr ? frame->width : 0,
 +                frame != nullptr ? frame->height : 0, is_reusing_frame ? 1 : 0);
- }
  
- Frame* Presenter::GetRenderFrame() {
+     free_frame();
+     if (!is_reusing_frame) {
  
 diff --git a/src/video_core/renderer_vulkan/bb_gpu_trace.cpp b/src/video_core/renderer_vulkan/bb_gpu_trace.cpp
 --- a/src/video_core/renderer_vulkan/bb_gpu_trace.cpp

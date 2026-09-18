@@ -77,7 +77,7 @@ jobs:
 
           $captureFix = Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CAPTURE_FIX1.patch'
           $captureFixStaged = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CAPTURE_FIX1.patch'
-          Stage-CanonicalText $captureFix $captureFixStaged '4fa2e0a52e285c5f51d4e10b9c7d13a156c3eabe75b4d00cc0cffde09ba0fc9c' 'STOP_V3_CAPTURE_FIX_STAGE_HASH'
+          Stage-CanonicalText $captureFix $captureFixStaged '69248901d5dd76b2da06b828954ff25ad4a987771607e3c9fca26041ce8e26bf' 'STOP_V3_CAPTURE_FIX_STAGE_HASH'
 
           $captureAudit = Join-Path $env:GITHUB_WORKSPACE '.github\contract\verify_clean1_capture_fix.py'
           $captureAuditStaged = Join-Path $env:RUNNER_TEMP 'verify_clean1_capture_fix.py'
@@ -86,7 +86,7 @@ jobs:
           $v3DriverRel = '.github/contract/BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
           $v3Driver = Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
           $v3DriverBlob = (git -C $env:GITHUB_WORKSPACE rev-parse "$head`:$v3DriverRel").Trim()
-          if ($LASTEXITCODE -ne 0 -or $v3DriverBlob -ne '609203134a50b8b1fd48d5785f6179696a055c60') { throw "STOP_V3_DRIVER_GIT_BLOB blob=$v3DriverBlob" }
+          if ($LASTEXITCODE -ne 0 -or $v3DriverBlob -ne 'e1a2424b884ed649858df6707041cd7160057775') { throw "STOP_V3_DRIVER_GIT_BLOB blob=$v3DriverBlob" }
           $v3DriverStaged = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
           $v3DriverText = [IO.File]::ReadAllText($v3Driver).Replace("`r`n", "`n")
           if ($v3DriverText.Contains("`r")) { throw 'STOP_V3_DRIVER_STAGE unexpected_cr' }
