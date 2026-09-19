@@ -1,0 +1,179 @@
+name: BLACKBOX CLEAN1 contract V3 capture-integrity
+
+on:
+  pull_request:
+    branches:
+      - Shadlix
+    paths:
+      - ".github/contract/BB_CLEAN1_CAPTURE_FIX1.patch"
+      - ".github/contract/verify_clean1_capture_fix.py"
+      - ".github/contract/BB_CLEAN1_CONTRACT_V3_DRIVER.ps1"
+      - ".github/contract/BB_CLEAN1_CONTRACT_V2_DRIVER.ps1"
+      - ".github/contract/run_blackbox_contract_v2.ps1"
+      - ".github/workflows/blackbox-clean1-contract-v3.yml"
+      - "ci-inputs/BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip"
+      - "ci-inputs/BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blackbox-clean1-contract-v3-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-clean1-contract-v3:
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout workflow head and authenticated inputs
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Stage exact inputs and generate V3 executor
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = '${{ github.event.pull_request.head.sha || github.sha }}'
+          $env:WORKFLOW_HEAD = $head
+
+          function Stage-CanonicalText([string]$Source, [string]$Destination, [string]$ExpectedSha, [string]$StopCode) {
+            if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) { throw "$StopCode missing" }
+            $text = [IO.File]::ReadAllText($Source).Replace("`r`n", "`n")
+            if ($text.Contains("`r")) { throw "$StopCode unexpected_cr" }
+            [IO.File]::WriteAllText($Destination, $text, [Text.UTF8Encoding]::new($false))
+            $actual = (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $ExpectedSha) { throw "$StopCode expected=$ExpectedSha actual=$actual" }
+          }
+
+          $v1Rel = '.github/contract/BB_CLEAN1_CONTRACT_V1.ps1'
+          $v1 = Join-Path $env:GITHUB_WORKSPACE $v1Rel
+          $v1Blob = (git -C $env:GITHUB_WORKSPACE rev-parse "$head`:$v1Rel").Trim()
+          if ($LASTEXITCODE -ne 0 -or $v1Blob -ne '4560c463208c603472de7fa0200a0283c4e69ca0') { throw "STOP_V3_V1_CONTRACT_IDENTITY blob=$v1Blob" }
+
+          $v2Driver = Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V2_DRIVER.ps1'
+          $launcherRel = '.github/contract/run_blackbox_contract_v2.ps1'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\contract\run_blackbox_contract_v2.ps1'
+          $launcherBlob = (git -C $env:GITHUB_WORKSPACE rev-parse "$head`:$launcherRel").Trim()
+          if ($LASTEXITCODE -ne 0 -or $launcherBlob -ne '9b88f5f09828c1731fb7968b46dc379c27d18e60') { throw "STOP_V3_LAUNCHER_GIT_BLOB blob=$launcherBlob" }
+
+          $inputs = Join-Path $env:RUNNER_TEMP 'bb-clean1-inputs'
+          New-Item -ItemType Directory -Path $inputs -Force | Out-Null
+          $ready = Join-Path $env:GITHUB_WORKSPACE 'ci-inputs\BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip'
+          $fix = Join-Path $env:GITHUB_WORKSPACE 'ci-inputs\BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip'
+          if (-not (Test-Path -LiteralPath $ready) -or -not (Test-Path -LiteralPath $fix)) { throw 'STOP_INPUT_UNAVAILABLE' }
+          if ((Get-FileHash $ready -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0b709de7e6c588b76786d8b648d5f669563c0bf45df5ec44a63db56f869e795f') { throw 'STOP_INPUT_READY4_HASH' }
+          if ((Get-FileHash $fix -Algorithm SHA256).Hash.ToLowerInvariant() -ne '13144512830870296d297ebbe194dd8a2d30d9c8eb57358654b67392a7824308') { throw 'STOP_INPUT_PATCHFIX1_HASH' }
+          Copy-Item -LiteralPath $ready -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_2026-09-15.zip')
+          Copy-Item -LiteralPath $fix -Destination (Join-Path $inputs 'BB_BLACKBOX_V1_CI_CLEAN1_SOURCE_READY4_PATCHFIX1_2026-09-15.zip')
+
+          $launcherStaged = Join-Path $env:RUNNER_TEMP 'run_blackbox_contract_v2.ps1'
+          Stage-CanonicalText $launcher $launcherStaged '71d6d3f20ddf81881d0d3a9c7eb25dbd6ca783a16bfe319f0cf218d49ce15ac3' 'STOP_V3_LAUNCHER_STAGE_HASH'
+
+          $captureFix = Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CAPTURE_FIX1.patch'
+          $captureFixStaged = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CAPTURE_FIX1.patch'
+          Stage-CanonicalText $captureFix $captureFixStaged '69248901d5dd76b2da06b828954ff25ad4a987771607e3c9fca26041ce8e26bf' 'STOP_V3_CAPTURE_FIX_STAGE_HASH'
+
+          $captureAudit = Join-Path $env:GITHUB_WORKSPACE '.github\contract\verify_clean1_capture_fix.py'
+          $captureAuditStaged = Join-Path $env:RUNNER_TEMP 'verify_clean1_capture_fix.py'
+          Stage-CanonicalText $captureAudit $captureAuditStaged '0cd328d6d21a2895c51cd176a8140afd6c64c67502b082838b0abe849773a050' 'STOP_V3_CAPTURE_AUDIT_STAGE_HASH'
+
+          $v3DriverRel = '.github/contract/BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
+          $v3Driver = Join-Path $env:GITHUB_WORKSPACE '.github\contract\BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
+          $v3DriverBlob = (git -C $env:GITHUB_WORKSPACE rev-parse "$head`:$v3DriverRel").Trim()
+          if ($LASTEXITCODE -ne 0 -or $v3DriverBlob -ne 'e1a2424b884ed649858df6707041cd7160057775') { throw "STOP_V3_DRIVER_GIT_BLOB blob=$v3DriverBlob" }
+          $v3DriverStaged = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V3_DRIVER.ps1'
+          $v3DriverText = [IO.File]::ReadAllText($v3Driver).Replace("`r`n", "`n")
+          if ($v3DriverText.Contains("`r")) { throw 'STOP_V3_DRIVER_STAGE unexpected_cr' }
+          [IO.File]::WriteAllText($v3DriverStaged, $v3DriverText, [Text.UTF8Encoding]::new($false))
+          $v3DriverCanonicalSha = (Get-FileHash -LiteralPath $v3DriverStaged -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "CLEAN1_V3_DRIVER_CANONICAL_SHA256=$v3DriverCanonicalSha"
+
+          $v2Effective = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V2_EFFECTIVE.ps1'
+          & $v2Driver -SourceContract $v1 -OutputContract $v2Effective
+          if ($LASTEXITCODE -ne 0) { throw "STOP_V3_V2_DRIVER exit=$LASTEXITCODE" }
+          if (-not (Test-Path -LiteralPath $v2Effective -PathType Leaf)) { throw 'STOP_V3_V2_EFFECTIVE_MISSING' }
+
+          $v3Effective = Join-Path $env:RUNNER_TEMP 'BB_CLEAN1_CONTRACT_V3_EFFECTIVE.ps1'
+          & $v3DriverStaged -SourceContract $v2Effective -OutputContract $v3Effective
+          if ($LASTEXITCODE -ne 0) { throw "STOP_V3_DRIVER exit=$LASTEXITCODE" }
+          if (-not (Test-Path -LiteralPath $v3Effective -PathType Leaf)) { throw 'STOP_V3_EFFECTIVE_CONTRACT_MISSING' }
+
+          "WORKFLOW_HEAD=$head" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "BB_CLEAN1_V2_LAUNCHER=$launcherStaged" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "BB_CLEAN1_V3_CAPTURE_FIX=$captureFixStaged" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "BB_CLEAN1_V3_CAPTURE_AUDIT=$captureAuditStaged" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "BB_CLEAN1_V3_EFFECTIVE=$v3Effective" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+      - name: Checkout frozen harness 184e040d
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 184e040de310f54024866adc6d5aa540d495a5fa
+          fetch-depth: 0
+          submodules: false
+          clean: true
+
+      - name: Setup Python 3.12.10 x64
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+
+      - name: Setup Visual Studio 2022 x64 shell
+        uses: egor-tensin/vs-shell@54e4148eac794e4580591c2e0b7750f14b7891fc
+        with:
+          arch: x64
+
+      - name: Setup Qt 6.9.3
+        uses: jurplel/install-qt-action@bcb88e3bed2e992f5f9e24c0f9e364a231d278eb
+        with:
+          version: 6.9.3
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          archives: qtbase qttools
+          modules: qtmultimedia
+          cache: true
+
+      - name: Reassert Python 3.12.10 x64 after Qt
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.10"
+          architecture: "x64"
+
+      - name: Pin canonical Git archive line endings
+        shell: pwsh
+        run: |
+          git -C $env:GITHUB_WORKSPACE config --local core.autocrlf false
+          if ($LASTEXITCODE -ne 0) { throw 'STOP_S0_GIT_EOL_CONFIG' }
+
+      - name: Execute CLEAN1 contract V3 S0-S8
+        shell: pwsh
+        run: |
+          $env:GIT_CONFIG_COUNT = '1'
+          $env:GIT_CONFIG_KEY_0 = 'core.symlinks'
+          $env:GIT_CONFIG_VALUE_0 = 'false'
+          & $env:BB_CLEAN1_V3_EFFECTIVE -WorkflowHead $env:WORKFLOW_HEAD
+
+      - name: Upload runnable CLEAN1 V3 package
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_CONTRACT_V3_WIN64_QT
+          path: ${{ runner.temp }}\bb-clean1-contract-v3\BB_CLEAN1_WIN64_QT.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload V3 diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_CONTRACT_V3_DIAGNOSTICS
+          path: ${{ runner.temp }}\bb-clean1-contract-v3\diagnostics
+          if-no-files-found: error
+          retention-days: 14

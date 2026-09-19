@@ -1,0 +1,73 @@
+name: BLACKBOX CLEAN1 minimal Windows build
+
+on:
+  pull_request:
+    branches:
+      - Shadlix
+    paths:
+      - ".bbx/**"
+      - ".github/workflows/blackbox-clean1-pr.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: blackbox-clean1-minimal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-clean1:
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout exact candidate head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          submodules: false
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Visual Studio 2022 x64 shell
+        uses: egor-tensin/vs-shell@v2
+        with:
+          arch: x64
+
+      - name: Setup Qt 6.9.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.9.3
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          archives: qtbase qttools
+          modules: qtmultimedia
+          cache: true
+
+      - name: Exact replay, Windows build, package and synthetic smoke
+        shell: pwsh
+        run: ./.bbx/ci/bootstrap_minimal_driver.ps1
+
+      - name: Upload runnable CLEAN1 package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_MINIMAL_WIN64_QT
+          path: ${{ env.RUNTIME_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_MINIMAL_DIAGNOSTICS
+          path: ${{ runner.temp }}\bbx-minimal-diagnostics
+          if-no-files-found: error
+          retention-days: 14

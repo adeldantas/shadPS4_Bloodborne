@@ -1,0 +1,91 @@
+name: BLACKBOX CLEAN1 PATCHFIX1
+
+on:
+  push:
+    branches:
+      - bb-blackbox-clean1-ready4-ci
+    paths:
+      - ".bbx/patchfix1/**"
+      - ".bbx/ci/bootstrap_patchfix1.ps1"
+      - ".github/workflows/blackbox-clean1-patchfix1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-clean1-patchfix1:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout PATCHFIX1 branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Reconstruct and validate PATCHFIX1 part01 transport
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $parts = @(
+            ".bbx/patchfix1/part01a.b64",
+            ".bbx/patchfix1/part01b.b64",
+            ".bbx/patchfix1/part01c.b64",
+            ".bbx/patchfix1/part01d1.b64",
+            ".bbx/patchfix1/part01d2.b64"
+          )
+          foreach ($p in $parts) {
+            if (-not (Test-Path -LiteralPath $p)) { throw "Missing corrected PATCHFIX1 chunk: $p" }
+          }
+          $content = ($parts | ForEach-Object { (Get-Content -LiteralPath $_ -Raw).Trim() }) -join ""
+          if ($content.Length -ne 8000) { throw "Corrected part01 length mismatch: $($content.Length)" }
+          $out = ".bbx/patchfix1/part01.b64"
+          [IO.File]::WriteAllText((Join-Path $PWD $out), $content, [Text.Encoding]::ASCII)
+          $sha = (Get-FileHash -LiteralPath $out -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($sha -ne "7b6b725fd55f495f4391d431b0a4622cceb99aab7e055b42af9b5da67cff0711") {
+            throw "Corrected part01 SHA256 mismatch: $sha"
+          }
+          Write-Host "PATCHFIX1_PART01_TRANSPORT_PASS=$sha"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Visual Studio 2022 shell
+        uses: egor-tensin/vs-shell@v2
+        with:
+          arch: x64
+
+      - name: Setup Qt 6.9.3
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.9.3
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          archives: qtbase qttools
+          modules: qtmultimedia
+          cache: false
+
+      - name: Exact replay, semantic gates, Tier-B build and packaging
+        shell: pwsh
+        run: ./.bbx/ci/bootstrap_patchfix1.ps1
+
+      - name: Upload runnable PATCHFIX1 package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_PATCHFIX1_WIN64_QT
+          path: ${{ env.RUNTIME_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload PATCHFIX1 diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BLACKBOX_V1_CI_CLEAN1_PATCHFIX1_DIAGNOSTICS
+          path: ${{ runner.temp }}\bbx-patchfix1-diagnostics
+          if-no-files-found: warn
+          retention-days: 14
